@@ -1,9 +1,7 @@
 import { createClient } from "redis";
 import { globalLogger } from "./logger.js";
 
-const REDIS_URL =
-  process.env.REDIS_URL ||
-  "redis://default:XCAWwkAiC3ny0AnOhbguwYRzlL8InbIE@redis-19244.crce220.us-east-1-4.ec2.cloud.redislabs.com:19244";
+const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
 export const redisClient = createClient({
   url: REDIS_URL,
