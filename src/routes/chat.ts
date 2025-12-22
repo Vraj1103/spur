@@ -121,4 +121,51 @@ router.post("/message", async (req: Request, res: Response) => {
   }
 });
 
+// Get all conversations (for sidebar)
+router.get("/conversations", async (req: Request, res: Response) => {
+  try {
+    const chatService = new ChatService();
+    const limit = parseInt(req.query.limit as string) || 20;
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const conversations = await chatService.getConversationsList(limit, offset);
+    res.json(conversations);
+  } catch (error: any) {
+    globalLogger.error("Failed to fetch conversations", {
+      error: error.message,
+    });
+    res.status(500).json({ error: "Failed to fetch conversations" });
+  }
+});
+
+// Get specific conversation history
+router.get("/conversation/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "Conversation ID is required" });
+    }
+
+    const chatService = new ChatService();
+    // We use getHistory to leverage Redis caching
+    const messages = await chatService.getHistory(id);
+
+    // If no messages found, check if conversation exists at all
+    if (messages.length === 0) {
+      const conversation = await chatService.getConversation(id);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+    }
+
+    res.json({ conversationId: id, messages });
+  } catch (error: any) {
+    globalLogger.error("Failed to fetch conversation history", {
+      error: error.message,
+      conversationId: req.params.id,
+    });
+    res.status(500).json({ error: "Failed to fetch conversation history" });
+  }
+});
+
 export default router;

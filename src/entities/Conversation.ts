@@ -15,6 +15,9 @@ export class Conversation {
   @CreateDateColumn()
   createdAt!: Date;
 
+  @Column({ nullable: true })
+  title?: string;
+
   @Column("jsonb", { nullable: true })
   metadata?: Record<string, any>;
 

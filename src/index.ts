@@ -4,6 +4,7 @@ import { errorHandler } from "./middlewares/errorHandler.js";
 import indexRoutes from "./routes/index.js";
 import chatRoutes from "./routes/chat.js";
 import { globalLogger } from "./utils/logger.js";
+import { connectRedis } from "./utils/redis.js";
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -34,8 +35,12 @@ app.use(errorHandler);
 
 // Initialize database and start server
 initializeDatabase()
-  .then(() => {
+  .then(async () => {
     validateEnvironment();
+
+    // Try connecting to Redis, but don't block startup if it fails
+    await connectRedis();
+
     globalLogger.info(`Server is running on port ${PORT}`);
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);

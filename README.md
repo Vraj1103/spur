@@ -34,23 +34,26 @@ DB_PASSWORD=your_postgres_password
 DB_NAME=spur_chat
 PORT=8000
 OPENAI_API_KEY=your_openai_api_key_here
+REDIS_URL=redis://default:password@host:port (Optional)
 ```
 
 - `DB_*`: PostgreSQL connection details. The database will be created automatically if it doesn't exist.
 - `PORT`: Server port (default: 8000).
 - `OPENAI_API_KEY`: Your OpenAI API key (required for chat functionality).
+- `REDIS_URL`: Connection string for Redis caching. If omitted, the app runs without caching.
 
 ## Running the App
 
 1. Ensure PostgreSQL is running and accessible.
+2. (Optional) Ensure Redis is running for caching support.
 
-2. Build the TypeScript code:
+3. Build the TypeScript code:
 
    ```bash
    npm run build
    ```
 
-3. Start the server:
+4. Start the server:
    - Development (with auto-reload): `npm run dev`
    - Production: `npm start`
 
@@ -121,6 +124,60 @@ curl -X POST "http://localhost:8000/chat/message?stream=true" \
   -d '{"message": "Hello"}'
 # Response: Server-Sent Events stream (e.g., [CALL_TO]\ndata: STANDARD_STRATEGY\n\ndata: Hi\n\ndata: there\n\n[DONE])
 ```
+
+### GET /chat/conversations
+
+Get a list of conversations for the sidebar (cached in Redis).
+
+**Query Parameters:**
+
+- `limit`: Number of items (default: 50)
+- `offset`: Pagination offset (default: 0)
+
+```bash
+curl "http://localhost:8000/chat/conversations?limit=20&offset=0"
+```
+
+**Response:**
+
+```json
+[
+  {
+    "id": "uuid...",
+    "title": "Return Policy Inquiry",
+    "createdAt": "2025-12-22T..."
+  }
+]
+```
+
+### GET /chat/conversation/:id
+
+Get full message history for a specific conversation (cached in Redis).
+
+```bash
+curl "http://localhost:8000/chat/conversation/uuid-here"
+```
+
+**Response:**
+
+```json
+{
+  "conversationId": "uuid...",
+  "messages": [
+    { "sender": "user", "content": "Hi", ... },
+    { "sender": "ai", "content": "Hello!", ... }
+  ]
+}
+```
+
+## Caching (Redis)
+
+The application uses Redis for performance optimization:
+
+1.  **Conversation History**: Uses Redis Lists (`RPUSH`, `LRANGE`) to append new messages and fetch history instantly without DB queries.
+2.  **Conversation List**: Uses Redis Strings to cache the sidebar list. The cache is automatically invalidated when a new conversation is created or a title is updated.
+
+If Redis is unavailable, the application gracefully falls back to PostgreSQL.
 
 ## Architecture
 
