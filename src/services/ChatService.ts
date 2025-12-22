@@ -9,9 +9,13 @@ export class ChatService {
   private messageRepository = AppDataSource.getRepository(Message);
 
   async createConversation(
-    metadata?: Record<string, any>
+    metadata?: Record<string, any>,
+    title: string = "New Conversation"
   ): Promise<Conversation> {
-    const conversation = this.conversationRepository.create({ metadata });
+    const conversation = this.conversationRepository.create({
+      metadata,
+      title,
+    });
     const saved = await this.conversationRepository.save(conversation);
     await this.invalidateConversationListCache();
     return saved;
@@ -147,6 +151,34 @@ export class ChatService {
   async updateTitle(id: string, title: string): Promise<void> {
     await this.conversationRepository.update(id, { title });
     await this.invalidateConversationListCache();
+  }
+
+  async deleteConversation(id: string): Promise<boolean> {
+    // Manually delete messages first to avoid FK constraint issues if CASCADE isn't set up
+    await this.messageRepository.delete({ conversationId: id });
+
+    const result = await this.conversationRepository.delete(id);
+
+    if (result.affected && result.affected > 0) {
+      // Clear Redis cache for this conversation
+      if (isRedisAvailable()) {
+        try {
+          await redisClient.del(`chat:${id}:history`);
+        } catch (error) {
+          globalLogger.warn(
+            "Failed to delete conversation history from Redis",
+            {
+              conversationId: id,
+            }
+          );
+        }
+      }
+
+      // Invalidate the list cache since an item was removed
+      await this.invalidateConversationListCache();
+      return true;
+    }
+    return false;
   }
 
   private async invalidateConversationListCache() {

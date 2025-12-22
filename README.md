@@ -35,12 +35,14 @@ DB_NAME=spur_chat
 PORT=8000
 OPENAI_API_KEY=your_openai_api_key_here
 REDIS_URL=redis://default:password@host:port (Optional)
+ALLOWED_ORIGINS=* (Optional, comma-separated list of allowed origins)
 ```
 
 - `DB_*`: PostgreSQL connection details. The database will be created automatically if it doesn't exist.
 - `PORT`: Server port (default: 8000).
 - `OPENAI_API_KEY`: Your OpenAI API key (required for chat functionality).
 - `REDIS_URL`: Connection string for Redis caching. If omitted, the app runs without caching.
+- `ALLOWED_ORIGINS`: Comma-separated list of allowed origins (e.g., `http://localhost:3000,https://myapp.com`). Defaults to `*` (allow all) if not provided.
 
 ## Running the App
 
@@ -91,9 +93,27 @@ curl http://localhost:8000/health
 # Response: {"status": "ok", "timestamp": "2025-12-21T..."}
 ```
 
+### POST /chat/conversation
+
+Create a new conversation explicitly. Returns the new session ID.
+
+```bash
+curl -X POST http://localhost:8000/chat/conversation
+```
+
+**Response:**
+
+```json
+{
+  "conversationId": "uuid...",
+  "title": "New Conversation",
+  "createdAt": "2025-12-22T..."
+}
+```
+
 ### POST /chat/message
 
-Main chat endpoint. Supports streaming and non-streaming.
+Main chat endpoint. Supports streaming and non-streaming. Automatically updates the title for the first message in a conversation.
 
 **Request Body:**
 
@@ -167,6 +187,23 @@ curl "http://localhost:8000/chat/conversation/uuid-here"
     { "sender": "user", "content": "Hi", ... },
     { "sender": "ai", "content": "Hello!", ... }
   ]
+}
+```
+
+### DELETE /chat/conversation/:id
+
+Delete a conversation and its history. Clears relevant Redis caches.
+
+```bash
+curl -X DELETE "http://localhost:8000/chat/conversation/uuid-here"
+```
+
+**Response:**
+
+```json
+{
+  "message": "Conversation deleted successfully",
+  "conversationId": "uuid..."
 }
 ```
 

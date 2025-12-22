@@ -6,6 +6,29 @@ import { globalLogger } from "../utils/logger.js";
 
 const router = Router();
 
+// Create a new conversation explicitly
+router.post("/conversation", async (req: Request, res: Response) => {
+  try {
+    const chatService = new ChatService();
+    const conversation = await chatService.createConversation();
+
+    globalLogger.info("Created new conversation explicitly", {
+      conversationId: conversation.id,
+    });
+
+    res.json({
+      conversationId: conversation.id,
+      title: conversation.title,
+      createdAt: conversation.createdAt,
+    });
+  } catch (error: any) {
+    globalLogger.error("Failed to create conversation", {
+      error: error.message,
+    });
+    res.status(500).json({ error: "Failed to create conversation" });
+  }
+});
+
 // Main chat endpoint: handles both streaming and non-streaming responses
 router.post("/message", async (req: Request, res: Response) => {
   const { message, sessionId } = req.body;
@@ -165,6 +188,35 @@ router.get("/conversation/:id", async (req: Request, res: Response) => {
       conversationId: req.params.id,
     });
     res.status(500).json({ error: "Failed to fetch conversation history" });
+  }
+});
+
+// Delete conversation
+router.delete("/conversation/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "Conversation ID is required" });
+    }
+
+    const chatService = new ChatService();
+    const deleted = await chatService.deleteConversation(id);
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    globalLogger.info("Conversation deleted", { conversationId: id });
+    res.json({
+      message: "Conversation deleted successfully",
+      conversationId: id,
+    });
+  } catch (error: any) {
+    globalLogger.error("Failed to delete conversation", {
+      error: error.message,
+      conversationId: req.params.id,
+    });
+    res.status(500).json({ error: "Failed to delete conversation" });
   }
 });
 

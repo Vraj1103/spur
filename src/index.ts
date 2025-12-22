@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { initializeDatabase } from "./data-source.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import indexRoutes from "./routes/index.js";
@@ -23,6 +24,19 @@ function validateEnvironment() {
   }
   globalLogger.info("Environment variables validated successfully.");
 }
+
+// CORS Configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : "*";
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 app.use(express.json());
 

@@ -13,9 +13,12 @@ const dbConfig = {
   username: process.env.DB_USERNAME || "postgres",
   password: process.env.DB_PASSWORD || "postgres",
   database: process.env.DB_NAME || "spur_chat",
+  ssl: process.env.DB_SSL === "true",
 };
 
 async function createDatabaseIfNotExists() {
+  // If using SSL (Cloud DB), likely the DB is already created or we might not have permissions
+  // to connect to 'postgres' database. We'll try, but proceed if it fails.
   const tempDataSource = new DataSource({
     type: "postgres",
     host: dbConfig.host,
@@ -23,6 +26,7 @@ async function createDatabaseIfNotExists() {
     username: dbConfig.username,
     password: dbConfig.password,
     database: "postgres", // Connect to default postgres database
+    ssl: dbConfig.ssl ? { rejectUnauthorized: false } : false,
   });
 
   try {
@@ -34,11 +38,17 @@ async function createDatabaseIfNotExists() {
     if (error.code === "42P04") {
       globalLogger.info(`Database "${dbConfig.database}" already exists`);
     } else {
-      globalLogger.error("Error creating database", { error: error.message });
-      throw error;
+      // If we can't connect to 'postgres' db or other errors, just log and warn
+      // The main connection might still work if the DB exists
+      globalLogger.warn(
+        "Could not create database (might already exist or permission denied)",
+        { error: error.message }
+      );
     }
   } finally {
-    await tempDataSource.destroy();
+    if (tempDataSource.isInitialized) {
+      await tempDataSource.destroy();
+    }
   }
 }
 
@@ -54,6 +64,7 @@ export const AppDataSource = new DataSource({
   entities: [Conversation, Message],
   migrations: [],
   subscribers: [],
+  ssl: dbConfig.ssl ? { rejectUnauthorized: false } : false,
 });
 
 export async function initializeDatabase() {
