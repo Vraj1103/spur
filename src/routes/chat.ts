@@ -6,6 +6,28 @@ import { globalLogger } from "../utils/logger.js";
 
 const router = Router();
 
+/**
+ * @openapi
+ * /chat/conversation:
+ *   post:
+ *     summary: Create a new conversation
+ *     tags: [Chat]
+ *     responses:
+ *       200:
+ *         description: The created conversation
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 conversationId:
+ *                   type: string
+ *                 title:
+ *                   type: string
+ *                 createdAt:
+ *                   type: string
+ *                   format: date-time
+ */
 // Create a new conversation explicitly
 router.post("/conversation", async (req: Request, res: Response) => {
   try {
@@ -36,6 +58,51 @@ const isValidUUID = (uuid: string) => {
   return uuidRegex.test(uuid);
 };
 
+/**
+ * @openapi
+ * /chat/message:
+ *   post:
+ *     summary: Send a message to the chat
+ *     tags: [Chat]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - message
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 description: The user's message
+ *               sessionId:
+ *                 type: string
+ *                 format: uuid
+ *                 description: The conversation ID (optional, creates new if omitted)
+ *     parameters:
+ *       - in: query
+ *         name: stream
+ *         schema:
+ *           type: boolean
+ *         description: Whether to stream the response (SSE)
+ *     responses:
+ *       200:
+ *         description: The AI response
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 reply:
+ *                   type: string
+ *                 sessionId:
+ *                   type: string
+ *           text/event-stream:
+ *             schema:
+ *               type: string
+ *               description: Server-Sent Events stream
+ */
 // Main chat endpoint: handles both streaming and non-streaming responses
 router.post("/message", async (req: Request, res: Response) => {
   const { message, sessionId } = req.body;
@@ -215,6 +282,43 @@ router.post("/message", async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * @openapi
+ * /chat/conversations:
+ *   get:
+ *     summary: Get a list of conversations
+ *     tags: [Chat]
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *         description: Number of conversations to return
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *         description: Pagination offset
+ *     responses:
+ *       200:
+ *         description: List of conversations
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                   title:
+ *                     type: string
+ *                   createdAt:
+ *                     type: string
+ *                     format: date-time
+ */
 // Get all conversations (for sidebar)
 router.get("/conversations", async (req: Request, res: Response) => {
   try {
@@ -249,6 +353,48 @@ router.get("/conversations", async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * @openapi
+ * /chat/conversation/{id}:
+ *   get:
+ *     summary: Get conversation history
+ *     tags: [Chat]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Conversation ID
+ *     responses:
+ *       200:
+ *         description: Conversation history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 conversationId:
+ *                   type: string
+ *                 messages:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       content:
+ *                         type: string
+ *                       sender:
+ *                         type: string
+ *                         enum: [user, assistant]
+ *                       timestamp:
+ *                         type: string
+ *                         format: date-time
+ *       404:
+ *         description: Conversation not found
+ */
 // Get specific conversation history
 router.get("/conversation/:id", async (req: Request, res: Response) => {
   try {
@@ -295,6 +441,26 @@ router.get("/conversation/:id", async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * @openapi
+ * /chat/conversation/{id}:
+ *   delete:
+ *     summary: Delete a conversation
+ *     tags: [Chat]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Conversation ID
+ *     responses:
+ *       200:
+ *         description: Conversation deleted successfully
+ *       404:
+ *         description: Conversation not found
+ */
 // Delete conversation
 router.delete("/conversation/:id", async (req: Request, res: Response) => {
   try {

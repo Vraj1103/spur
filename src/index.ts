@@ -7,6 +7,8 @@ import chatRoutes from "./routes/chat.js";
 import { globalLogger } from "./utils/logger.js";
 import { connectRedis } from "./utils/redis.js";
 import { KeepAliveService } from "./services/KeepAliveService.js";
+import swaggerUi from "swagger-ui-express";
+import swaggerSpec from "./utils/swagger.js";
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -40,6 +42,10 @@ app.use(
 );
 
 app.use(express.json());
+
+// Swagger UI - interactive API docs
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get("/docs.json", (req, res) => res.json(swaggerSpec));
 
 // Routes
 app.use("/", indexRoutes);
