@@ -17,7 +17,7 @@ Ensure you have the following installed:
 ### Step 2: Clone & Install
 
 ```bash
-git clone <repo-url>
+git clone <https://github.com/Vraj1103/spur.git>
 cd spur
 npm install
 ```
@@ -27,7 +27,7 @@ npm install
 Create a `.env` file in the root directory:
 
 ```bash
-cp .env.example .env # If available, otherwise create manually
+cp .env.example .env
 ```
 
 ### Step 4: Start the Server
@@ -104,8 +104,6 @@ The backend follows a **modular, layered architecture** designed for scalability
 
 1. **Strategy Pattern for Chat**: Instead of hardcoding the LLM logic in the controller, we use a Strategy pattern. This makes it trivial to swap out "GPT-4o" for a "RAG Agent" or "Rule-based Bot" based on user intent or configuration.
 2. **Dual-Mode Responses**: The `/message` endpoint supports both **Server-Sent Events (SSE)** for real-time streaming and standard JSON responses, handled dynamically based on the `?stream=true` query param.
-3. **Self-Healing Keep-Alive**: A background service pings the application to prevent sleep on free-tier hosting providers (like Render).
-
 ---
 
 ## 🤖 LLM Notes
@@ -127,7 +125,7 @@ The backend follows a **modular, layered architecture** designed for scalability
 ### **Trade-offs**
 
 - **Synchronize: True**: Used for speed of development. In a real production environment, I would disable this and use proper **TypeORM Migrations** to manage schema changes safely.
-- **In-Memory/Redis Context**: Context window management is simple (last N messages). For very long conversations, a summarization strategy would be more cost-effective.
+- **In-Memory/Redis Context**: Context window management is simple. For very long conversations, a summarization strategy would be more cost-effective.
 
 ### **If I had more time...**
 
