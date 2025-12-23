@@ -6,6 +6,7 @@ import indexRoutes from "./routes/index.js";
 import chatRoutes from "./routes/chat.js";
 import { globalLogger } from "./utils/logger.js";
 import { connectRedis } from "./utils/redis.js";
+import { KeepAliveService } from "./services/KeepAliveService.js";
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -58,6 +59,8 @@ initializeDatabase()
     globalLogger.info(`Server is running on port ${PORT}`);
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
+      // Start self-ping service to keep Render instance alive
+      KeepAliveService.start();
     });
   })
   .catch((err) => {
