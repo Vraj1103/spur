@@ -17,7 +17,7 @@ Ensure you have the following installed:
 ### Step 2: Clone & Install
 
 ```bash
-git clone <https://github.com/Vraj1103/spur.git>
+git clone https://github.com/Vraj1103/spur.git
 cd spur
 npm install
 ```
