@@ -260,12 +260,12 @@ If Redis is unavailable, the application gracefully falls back to PostgreSQL.
 - **Facade-Factory-Strategy Pattern**: Orchestrator manages chat flow, factory selects strategies.
 - **Streaming Protocol**: Uses Server-Sent Events with control flags for UI updates.
 - **Persistence**: Conversations and messages stored in PostgreSQL via TypeORM.
-- **LLM Integration**: OpenAI GPT-3.5-turbo with store knowledge in system prompt.
+- **LLM Integration**: OpenAI GPT-4o with store knowledge in system prompt.
 
 ## Notes
 
 - The system currently uses only the `STANDARD` chat strategy.
-- Input validation: Messages must be non-empty strings ≤1000 characters.
+- Input validation: Messages must be non-empty strings ≤16000 characters.
 - Error handling: Graceful failures with user-friendly messages.
 - Cost control: Max 500 tokens per response.
 
