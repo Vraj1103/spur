@@ -13,6 +13,10 @@ Ensure you have the following installed:
 - **Node.js** (v18+)
 - **PostgreSQL** (v12+)
 - **Redis** (Optional, for caching)
+- Clone **Front-end** from here:
+   ```
+   https://github.com/Vraj1103/Spur-FE
+   ```
 
 ### Step 2: Clone & Install
 
