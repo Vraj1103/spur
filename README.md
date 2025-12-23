@@ -1,101 +1,140 @@
 # Spur Chat Backend
 
-A TypeScript backend for a customer support chat system using OpenAI's API, with streaming and non-streaming responses. Built with Express, TypeORM, and PostgreSQL.
+A robust, production-ready TypeScript backend for a customer support chat system. Built with **Express**, **TypeORM**, and **PostgreSQL**, leveraging **OpenAI's GPT-4o** for intelligent responses. Features include real-time streaming, Redis caching, and a modular strategy-based architecture.
 
-## Prerequisites
+---
 
-- Node.js (v18 or higher)
-- PostgreSQL (v12 or higher)
-- npm or yarn
+## 🚀 How to Run It Locally
 
-## Installation
+### Step 1: Prerequisites
 
-1. Clone the repository:
+Ensure you have the following installed:
 
-   ```bash
-   git clone <repo-url>
-   cd spur
-   ```
+- **Node.js** (v18+)
+- **PostgreSQL** (v12+)
+- **Redis** (Optional, for caching)
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-## Environment Setup
-
-Create a `.env` file in the root directory with the following keys:
-
-```env
-DB_HOST=localhost
-DB_PORT=5432
-DB_USERNAME=postgres
-DB_PASSWORD=your_postgres_password
-DB_NAME=spur_chat
-PORT=8000
-OPENAI_API_KEY=your_openai_api_key_here
-REDIS_URL=redis://default:password@host:port (Optional)
-ALLOWED_ORIGINS=* (Optional, comma-separated list of allowed origins)
-```
-
-- `DB_*`: PostgreSQL connection details. The database will be created automatically if it doesn't exist.
-- `PORT`: Server port (default: 8000).
-- `OPENAI_API_KEY`: Your OpenAI API key (required for chat functionality).
-- `REDIS_URL`: Connection string for Redis caching. If omitted, the app runs without caching.
-- `ALLOWED_ORIGINS`: Comma-separated list of allowed origins (e.g., `http://localhost:3000,https://myapp.com`). Defaults to `*` (allow all) if not provided.
-
-## Running the App
-
-1. Ensure PostgreSQL is running and accessible.
-2. (Optional) Ensure Redis is running for caching support.
-
-3. Build the TypeScript code:
-
-   ```bash
-   npm run build
-   ```
-
-4. Start the server:
-   - Development (with auto-reload): `npm run dev`
-   - Production: `npm start`
-
-The server will start on the specified `PORT` and validate environment variables on startup.
-
-## Logging
-
-The app uses Winston for structured logging with console and daily-rotating file outputs.
-
-- **Log Levels**: ERROR, WARN, INFO, DEBUG
-- **Log Files**: Located in `logs/` directory (auto-created)
-  - `spur-backend-YYYY-MM-DD.log` for server logs
-  - `spur-sql-YYYY-MM-DD.log` for database logs
-- **Default Level**: ERROR (can be adjusted via code if needed)
-
-Logs include timestamps, levels, and metadata for debugging.
-
-## API Endpoints
-
-### GET /ping
-
-Basic health check.
+### Step 2: Clone & Install
 
 ```bash
-curl http://localhost:8000/ping
-# Response: "pong"
+git clone <repo-url>
+cd spur
+npm install
 ```
 
-### GET /health
+### Step 3: Configure Environment
 
-Detailed health check.
+Create a `.env` file in the root directory:
 
 ```bash
-curl http://localhost:8000/health
-# Response: {"status": "ok", "timestamp": "2025-12-21T..."}
+cp .env.example .env # If available, otherwise create manually
 ```
 
-### POST /chat/conversation
+### Step 4: Start the Server
 
-Create a new conversation explicitly. Returns the new session ID.
+```bash
+# Development mode (with hot-reload)
+npm run dev
+
+# Production build
+npm run build
+npm start
+```
+
+The server will start on `http://localhost:8000`.
+
+---
+
+## 🗄️ How to Set Up DB
+
+This project uses **TypeORM** with `synchronize: true` for development, meaning **migrations are handled automatically**.
+
+1. **Create a Local Database**:
+   The application attempts to automatically create the database `spur_chat` if it doesn't exist.
+   _Ensure your PostgreSQL user has permission to create databases._
+
+2. **Manual Setup (If auto-creation fails)**:
+
+   ```sql
+   CREATE DATABASE spur_chat;
+   ```
+
+3. **Seeding**:
+   Currently, no seeding script is required as the app creates necessary tables on startup.
+
+---
+
+## 🔑 Environment Variables
+
+Configure these in your `.env` file:
+
+| Variable              | Description                  | Default     |
+| --------------------- | ---------------------------- | ----------- |
+| `PORT`                | Server port                  | `8000`      |
+| `DB_HOST`             | Database host                | `localhost` |
+| `DB_PORT`             | Database port                | `5432`      |
+| `DB_USERNAME`         | Database user                | `postgres`  |
+| `DB_PASSWORD`         | Database password            | `postgres`  |
+| `DB_NAME`             | Database name                | `spur_chat` |
+| `DB_SSL`              | Enable SSL (for cloud DBs)   | `false`     |
+| `OPENAI_API_KEY`      | **Required**. OpenAI API Key | -           |
+| `REDIS_URL`           | Redis connection string      | -           |
+| `ALLOWED_ORIGINS`     | CORS allowed origins         | `*`         |
+| `RENDER_EXTERNAL_URL` | Self-ping URL for KeepAlive  | -           |
+
+---
+
+## 🏗️ Short Architecture Overview
+
+The backend follows a **modular, layered architecture** designed for scalability and maintainability.
+
+### **Layers & Modules**
+
+- **Routes (`src/routes`)**: Defines API endpoints (`/chat`, `/health`). Handles request validation and response formatting.
+- **Services (`src/services`)**: Contains business logic.
+  - `ChatService`: Manages conversation history and DB interactions.
+  - `KeepAliveService`: Prevents cold starts on serverless platforms.
+- **Core & Strategies (`src/core`, `src/strategies`)**:
+  - **`ChatOrchestrator`**: The central brain that directs messages to the correct strategy.
+  - **Strategy Pattern**: Implements `BaseChatStrategy`. Currently features `StandardLLMStrategy` for direct LLM interaction. This allows easy addition of new modes (e.g., RAG, Agentic) without rewriting core logic.
+- **Entities (`src/entities`)**: TypeORM models defining the database schema (`Conversation`, `Message`).
+- **Utils (`src/utils`)**: Shared utilities for Logging (Winston), Redis, and Error Handling.
+
+### **Interesting Design Decisions**
+
+1. **Strategy Pattern for Chat**: Instead of hardcoding the LLM logic in the controller, we use a Strategy pattern. This makes it trivial to swap out "GPT-4o" for a "RAG Agent" or "Rule-based Bot" based on user intent or configuration.
+2. **Dual-Mode Responses**: The `/message` endpoint supports both **Server-Sent Events (SSE)** for real-time streaming and standard JSON responses, handled dynamically based on the `?stream=true` query param.
+3. **Self-Healing Keep-Alive**: A background service pings the application to prevent sleep on free-tier hosting providers (like Render).
+
+---
+
+## 🤖 LLM Notes
+
+### **Provider**
+
+- **OpenAI (GPT-4o)**: Chosen for its superior reasoning capabilities and speed.
+
+### **Prompting Strategy**
+
+- We use a **System Prompt** to define the persona and constraints.
+- Context is managed by fetching the last `N` messages from the conversation history (cached in Redis) and appending the new user query.
+- **Streaming**: We utilize OpenAI's streaming API to provide immediate feedback to the user, improving perceived latency.
+
+---
+
+## ⏳ Trade-offs & "If I had more time..."
+
+### **Trade-offs**
+
+- **Synchronize: True**: Used for speed of development. In a real production environment, I would disable this and use proper **TypeORM Migrations** to manage schema changes safely.
+- **In-Memory/Redis Context**: Context window management is simple (last N messages). For very long conversations, a summarization strategy would be more cost-effective.
+
+### **If I had more time...**
+
+1.  **RAG Support (Retrieval-Augmented Generation)**: Integrate a vector database (like Pinecone or pgvector) to allow the LLM to query a knowledge base for more accurate, domain-specific answers.
+2.  **Agentic Orchestration Layer**: Implement an agent framework (like LangChain or a custom loop) where the LLM can decide to call tools (search, calculator, API) before answering.
+3.  **LLM Vendor Neutrality**: Abstract the LLM provider layer further to support Anthropic (Claude), Google (Gemini), or local models (via Ollama) via configuration.
+4.  **Optimized Context Management**: Implement a better technique of utilising conversation_history using responses api.
 
 ```bash
 curl -X POST http://localhost:8000/chat/conversation

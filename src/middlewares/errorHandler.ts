@@ -3,7 +3,7 @@ import { globalLogger } from "../utils/logger.js";
 
 // Global error handler for unhandled errors
 export const errorHandler = (
-  err: Error,
+  err: any,
   req: Request,
   res: Response,
   next: NextFunction
@@ -13,6 +13,28 @@ export const errorHandler = (
     stack: err.stack,
     url: req.url,
     method: req.method,
+    type: err.name,
   });
-  res.status(500).json({ error: "Something went wrong!" });
+
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  // Handle JSON parse errors (SyntaxError)
+  if (
+    err instanceof SyntaxError &&
+    "status" in err &&
+    err.status === 400 &&
+    "body" in err
+  ) {
+    return res.status(400).json({
+      error: "Bad Request",
+      details: "Invalid JSON format in request body.",
+    });
+  }
+
+  res.status(500).json({
+    error: "Internal Server Error",
+    details: "An unexpected error occurred on the server.",
+  });
 };
