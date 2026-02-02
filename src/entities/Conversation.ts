@@ -15,7 +15,7 @@ export class Conversation {
   @CreateDateColumn()
   createdAt!: Date;
 
-  @Column({ nullable: true })
+  @Column({ type: "varchar", nullable: true })
   title?: string;
 
   @Column("jsonb", { nullable: true })

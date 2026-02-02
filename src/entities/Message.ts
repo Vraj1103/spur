@@ -15,7 +15,7 @@ export class Message {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  @Column()
+  @Column({ type: "uuid" })
   conversationId!: string;
 
   @ManyToOne("Conversation", (conversation: any) => conversation.messages, {
