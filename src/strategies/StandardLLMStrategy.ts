@@ -129,6 +129,12 @@ Citations and links:
 
 -Do not invent URLs. Only use URLs you actually see in the metadata or context text.
 
+Use the retrieved content only as reference.
+Write a concise, original answer in your own words.
+Do not copy bullet lists verbatim; summarize them in 3–5 sentences.
+
+
+
 ### End of System Prompt ###
 Answer format
 
@@ -156,7 +162,7 @@ export class StandardLLMStrategy extends BaseChatStrategy {
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
-    
+
     try {
       this.pinecone = new Pinecone({
         apiKey: process.env.PINECONE_API_KEY!,
@@ -164,7 +170,9 @@ export class StandardLLMStrategy extends BaseChatStrategy {
       this.pineconeIndex = this.pinecone.index("credit-card").namespace("");
       globalLogger.info("Pinecone client initialized successfully");
     } catch (error) {
-      globalLogger.error("Failed to initialize Pinecone client", { error: (error as Error).message });
+      globalLogger.error("Failed to initialize Pinecone client", {
+        error: (error as Error).message,
+      });
       throw error;
     }
   }
@@ -172,7 +180,11 @@ export class StandardLLMStrategy extends BaseChatStrategy {
   /**
    * Step 1: Detect card name/slug from user query using LLM
    */
-  private async detectCard(query: string): Promise<{ cardName?: string; cardSlug?: string; chunkType?: string } | null> {
+  private async detectCard(query: string): Promise<{
+    cardName?: string;
+    cardSlug?: string;
+    chunkType?: string;
+  } | null> {
     try {
       globalLogger.info("Detecting card from query", { query });
 
@@ -233,7 +245,10 @@ User query: "${query}"`;
       // Parse JSON response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        globalLogger.warn("Could not extract JSON from card detection response", { content });
+        globalLogger.warn(
+          "Could not extract JSON from card detection response",
+          { content },
+        );
         return null;
       }
 
@@ -260,17 +275,238 @@ User query: "${query}"`;
   }
 
   /**
-   * Step 2: Fetch context from Pinecone with optional filters
+   * Check if query needs important_links (KFS, PDFs, terms, etc.)
    */
-  private async fetchContext(
+  private needsImportantLinks(query: string): boolean {
+    const linksKeywords = [
+      "kfs",
+      "key facts statement",
+      "fees",
+      "charges",
+      "terms",
+      "conditions",
+      "pdf",
+      "document",
+      "full details",
+      "link",
+      "where can i find",
+      "download",
+      "statement",
+      "agreement",
+    ];
+
+    const lowerQuery = query.toLowerCase();
+    return linksKeywords.some((keyword) => lowerQuery.includes(keyword));
+  }
+
+  /**
+   * Per-type top-K retrieval: Query Pinecone separately for each chunk type
+   */
+  private async fetchContextPerType(
+    query: string,
+    cardSlug: string,
+  ): Promise<{ context: string; matchCount: number; links: string[] }> {
+    try {
+      globalLogger.info("Starting per-type retrieval", { query, cardSlug });
+
+      // Generate embedding once for all queries
+      const embeddingResponse = await this.openai.embeddings.create({
+        model: "text-embedding-3-small",
+        input: [query],
+        dimensions: 512,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding;
+      globalLogger.info("Embedding generated for per-type queries", {
+        embeddingLength: embedding.length,
+      });
+
+      // Define the base chunk types we always want to query
+      const chunkTypes = ["card_info", "benefits_list", "card_benefits_detail"];
+
+      // Check if we should also query for important_links
+      const shouldFetchLinks = this.needsImportantLinks(query);
+      if (shouldFetchLinks) {
+        chunkTypes.push("important_links");
+        globalLogger.info(
+          "Query contains link-related keywords, will fetch important_links",
+        );
+      } else {
+        globalLogger.info("Query does not need important_links, skipping");
+      }
+
+      const allMatches: any[] = [];
+      const matchesByType: Record<string, number> = {};
+      const allLinks = new Set<string>();
+
+      // Run separate query for each chunk type
+      for (const chunkType of chunkTypes) {
+        const filter = {
+          $and: [{ card_slug: cardSlug }, { chunk_type: chunkType }],
+        };
+
+        try {
+          const queryResponse = await this.pineconeIndex.query({
+            vector: embedding,
+            topK: 1,
+            includeMetadata: true,
+            filter,
+          });
+
+          const matches = queryResponse.matches || [];
+          matchesByType[chunkType] = matches.length;
+
+          if (matches.length > 0) {
+            allMatches.push(...matches);
+            globalLogger.info(
+              `Query for ${chunkType} returned ${matches.length} match(es)`,
+              {
+                chunkType,
+                matchCount: matches.length,
+                firstMatch: matches[0]
+                  ? {
+                      id: matches[0].id,
+                      score: matches[0].score,
+                      contentPreview: matches[0].metadata?.content
+                        ? String(matches[0].metadata.content).substring(0, 100)
+                        : "N/A",
+                    }
+                  : null,
+              },
+            );
+
+            // Extract links from all chunks
+            for (const match of matches) {
+              if (match.metadata?.url) {
+                allLinks.add(match.metadata.url);
+              }
+            }
+          } else {
+            globalLogger.info(`Query for ${chunkType} returned 0 matches`, {
+              chunkType,
+            });
+          }
+        } catch (error) {
+          globalLogger.error(`Failed to query for ${chunkType}`, {
+            error: (error as Error).message,
+            chunkType,
+          });
+        }
+      }
+
+      globalLogger.info("Per-type retrieval summary", {
+        totalMatches: allMatches.length,
+        matchesByType,
+        uniqueLinks: allLinks.size,
+        queriedImportantLinks: shouldFetchLinks,
+      });
+
+      // Deduplicate by id
+      const seenIds = new Set<string>();
+      const uniqueMatches = allMatches.filter((match) => {
+        if (seenIds.has(match.id)) {
+          return false;
+        }
+        seenIds.add(match.id);
+        return true;
+      });
+
+      // Sort by score descending
+      uniqueMatches.sort((a, b) => b.score - a.score);
+
+      // Build context string
+      const contextChunks: string[] = [];
+
+      for (const match of uniqueMatches) {
+        const metadata = match.metadata as any;
+
+        // Log what we're including
+        globalLogger.info("Including chunk in context", {
+          id: match.id,
+          score: match.score,
+          card_slug: metadata.card_slug,
+          chunk_type: metadata.chunk_type,
+          contentPreview: metadata.content
+            ? String(metadata.content).substring(0, 100) + "..."
+            : "N/A",
+        });
+
+        // Special formatting for important_links
+        if (metadata.chunk_type === "important_links") {
+          const linksContent = metadata.content || "";
+          const chunkText = `
+Chunk ID: ${match.id}
+Score: ${match.score}
+Card Name: ${metadata.card_name || "N/A"}
+Card Slug: ${metadata.card_slug || "N/A"}
+Chunk Type: important_links
+Source Type: ${metadata.source_type || "N/A"}
+
+Important Links and Documents:
+${linksContent}
+---
+`;
+          contextChunks.push(chunkText);
+        } else {
+          // Standard formatting for other chunk types
+          const chunkText = `
+Chunk ID: ${match.id}
+Score: ${match.score}
+Card Name: ${metadata.card_name || "N/A"}
+Card Slug: ${metadata.card_slug || "N/A"}
+Chunk Type: ${metadata.chunk_type || "N/A"}
+Source Type: ${metadata.source_type || "N/A"}
+URL: ${metadata.url || "N/A"}
+Content: ${metadata.content || "N/A"}
+---
+`;
+          contextChunks.push(chunkText);
+        }
+      }
+
+      // Add all collected links summary at the end (for additional reference)
+      if (allLinks.size > 0) {
+        contextChunks.push(
+          `\nAdditional Relevant URLs:\n${Array.from(allLinks).join("\n")}\n---\n`,
+        );
+      }
+
+      const finalContext = contextChunks.join("\n");
+      const matchCount = uniqueMatches.length;
+
+      globalLogger.info("Per-type context build completed", {
+        contextLength: finalContext.length,
+        numberOfChunks: uniqueMatches.length,
+        matchCount,
+      });
+
+      return {
+        context: finalContext,
+        matchCount,
+        links: Array.from(allLinks),
+      };
+    } catch (error) {
+      globalLogger.error("Failed per-type context fetch", {
+        error: (error as Error).message,
+        stack: (error as Error).stack,
+      });
+      return { context: "", matchCount: 0, links: [] };
+    }
+  }
+
+  /**
+   * Fallback: Broad query without filters
+   */
+  private async fetchContextBroad(
     query: string,
     topK: number = 10,
-    filter?: Record<string, any>,
   ): Promise<{ context: string; matchCount: number }> {
     try {
-      const filterDesc = filter ? JSON.stringify(filter) : "none";
-      globalLogger.info("Starting context fetch for query", { query, topK, filter: filterDesc });
-      
+      globalLogger.info("Starting broad context fetch (no filter)", {
+        query,
+        topK,
+      });
+
       // Generate embedding for the query
       const embeddingResponse = await this.openai.embeddings.create({
         model: "text-embedding-3-small",
@@ -279,42 +515,31 @@ User query: "${query}"`;
       });
 
       const embedding = embeddingResponse.data[0].embedding;
-      globalLogger.info("Embedding generated successfully", { embeddingLength: embedding.length });
 
-      // Build Pinecone query params
-      const queryParams: any = {
+      // Query Pinecone without filter
+      const queryResponse = await this.pineconeIndex.query({
         vector: embedding,
         topK,
         includeMetadata: true,
-      };
+      });
 
-      // Add filter if provided
-      if (filter) {
-        queryParams.filter = filter;
-        globalLogger.info("Pinecone query params with filter", { 
-          queryParams: JSON.stringify(queryParams, null, 2)
-        });
-      }
-
-      // Query Pinecone
-      const queryResponse = await this.pineconeIndex.query(queryParams);
-
-      globalLogger.info("Pinecone query completed", { 
+      globalLogger.info("Broad Pinecone query completed", {
         matchCount: queryResponse.matches?.length || 0,
-        withFilter: !!filter,
       });
 
       // Log detailed match information
       if (queryResponse.matches && queryResponse.matches.length > 0) {
-        globalLogger.info("Retrieved matches from Pinecone:", {
+        globalLogger.info("Retrieved matches from broad query:", {
           matches: queryResponse.matches.map((match: any) => ({
             id: match.id,
             score: match.score,
             card_name: match.metadata?.card_name || "N/A",
             card_slug: match.metadata?.card_slug || "N/A",
             chunk_type: match.metadata?.chunk_type || "N/A",
-            text_preview: match.metadata?.content ? String(match.metadata.content).substring(0, 200) + "..." : "N/A"
-          }))
+            text_preview: match.metadata?.content
+              ? String(match.metadata.content).substring(0, 100) + "..."
+              : "N/A",
+          })),
         });
       }
 
@@ -339,14 +564,16 @@ Content: ${metadata.content || "N/A"}
 
       const finalContext = contextChunks.join("\n");
       const matchCount = queryResponse.matches?.length || 0;
-      globalLogger.info("Context fetch completed", { 
+
+      globalLogger.info("Broad context fetch completed", {
         contextLength: finalContext.length,
         numberOfChunks: contextChunks.length,
-        matchCount 
+        matchCount,
       });
+
       return { context: finalContext, matchCount };
     } catch (error) {
-      globalLogger.error("Failed to fetch context from Pinecone", {
+      globalLogger.error("Failed to fetch broad context from Pinecone", {
         error: (error as Error).message,
         stack: (error as Error).stack,
       });
@@ -357,7 +584,11 @@ Content: ${metadata.content || "N/A"}
   /**
    * Build Pinecone filter based on detected card and chunk type
    */
-  private buildPineconeFilter(detected: { cardName?: string; cardSlug?: string; chunkType?: string }): Record<string, any> | undefined {
+  private buildPineconeFilter(detected: {
+    cardName?: string;
+    cardSlug?: string;
+    chunkType?: string;
+  }): Record<string, any> | undefined {
     const conditions: any[] = [];
 
     // Add card filter (prefer card_slug)
@@ -392,50 +623,45 @@ Content: ${metadata.content || "N/A"}
 
       // STEP 1: Detect card from user query
       const detected = await this.detectCard(userQuery);
-      
+
       let context = "";
       let matchCount = 0;
-      
-      if (detected) {
-        // STEP 2a: Build filter based on detection
-        const filter = this.buildPineconeFilter(detected);
-        
-        if (filter) {
-          globalLogger.info("Querying Pinecone with filter", { 
-            filter: JSON.stringify(filter, null, 2),
-            detected 
-          });
-          
-          // Try filtered query first
-          const result = await this.fetchContext(userQuery, 10, filter);
-          context = result.context;
-          matchCount = result.matchCount;
-          
-          // STEP 2b: Fallback to broad query if no results
-          if (matchCount === 0) {
-            globalLogger.warn("Filtered query returned 0 matches, falling back to broad query", {
-              filter: JSON.stringify(filter),
-            });
-            const broadResult = await this.fetchContext(userQuery, 10);
-            context = broadResult.context;
-            matchCount = broadResult.matchCount;
-          } else {
-            globalLogger.info("Filtered query returned results successfully", {
-              matchCount,
-              contextLength: context.length,
-            });
-          }
+
+      if (detected && detected.cardSlug) {
+        // STEP 2a: Use per-type retrieval for detected card
+        globalLogger.info("Using per-type retrieval for detected card", {
+          cardSlug: detected.cardSlug,
+          detected,
+        });
+
+        const result = await this.fetchContextPerType(
+          userQuery,
+          detected.cardSlug,
+        );
+        context = result.context;
+        matchCount = result.matchCount;
+
+        // STEP 2b: Fallback to broad query if no results from per-type queries
+        if (matchCount === 0) {
+          globalLogger.warn(
+            "Per-type queries returned 0 total matches, falling back to broad query",
+            {
+              cardSlug: detected.cardSlug,
+            },
+          );
+          const broadResult = await this.fetchContextBroad(userQuery, 10);
+          context = broadResult.context;
+          matchCount = broadResult.matchCount;
         } else {
-          // No filter could be built, use broad query
-          globalLogger.info("No filter built from detection, using broad query");
-          const result = await this.fetchContext(userQuery, 10);
-          context = result.context;
-          matchCount = result.matchCount;
+          globalLogger.info("Per-type retrieval successful", {
+            matchCount,
+            contextLength: context.length,
+          });
         }
       } else {
-        // STEP 2c: No card detected, use broad query
-        globalLogger.info("No card detected in query, using broad query");
-        const result = await this.fetchContext(userQuery, 10);
+        // STEP 2c: No card detected or no slug, use broad query
+        globalLogger.info("No card slug detected, using broad query");
+        const result = await this.fetchContextBroad(userQuery, 10);
         context = result.context;
         matchCount = result.matchCount;
       }
@@ -452,7 +678,7 @@ Content: ${metadata.content || "N/A"}
       globalLogger.info("System prompt prepared", {
         systemPromptLength: systemPromptWithContext.length,
         contextIncluded: context.length > 0,
-        contextPreview: context.substring(0, 500) + "..."
+        contextPreview: context.substring(0, 500) + "...",
       });
 
       // Build messages
@@ -474,9 +700,14 @@ Content: ${metadata.content || "N/A"}
         messageCount: messages.length,
         conversationId:
           this.memory.length > 0 ? this.memory[0].conversationId : "unknown",
-        systemPromptLength: messages[0].content ? String(messages[0].content).length : 0,
+        systemPromptLength: messages[0].content
+          ? String(messages[0].content).length
+          : 0,
         memoryLength: this.memory.length,
-        lastUserMessage: this.memory.length > 0 ? this.memory[this.memory.length - 1].content : "N/A"
+        lastUserMessage:
+          this.memory.length > 0
+            ? this.memory[this.memory.length - 1].content
+            : "N/A",
       });
 
       // Stream from OpenAI with timeout
