@@ -129,9 +129,9 @@ Citations and links:
 
 -Do not invent URLs. Only use URLs you actually see in the metadata or context text.
 
-Use the retrieved content only as reference.
-Write a concise, original answer in your own words.
-Do not copy bullet lists verbatim; summarize them in 3–5 sentences.
+-CRITICAL: Whenever you mention a card name in your response, you MUST include its official URL if available in the context. Format as: [Card Name](URL)
+
+-If you receive a "Card URLs:" section in the context, use those URLs to link card names even if they don't appear in the chunk metadata.
 
 
 
@@ -147,7 +147,7 @@ Answer format
 -For comparisons, group bullets under each card name so it’s easy to scan the differences.
 
 -When you state a fact that comes from a context chunk with a url, mention that URL close to where the fact is used (for example: “Official card page: <url>” or “KFS: <url>”) so the user can verify the information.
-
+-When listing cards, always include the URL for each card: [Card Name](URL)
 
 Always remember: you are a friendly, factual assistant focused on Emirates NBD credit cards, grounded strictly in the retrieved content and connected URLs.
 `;
@@ -280,12 +280,13 @@ User query: "${query}"`;
   private extractCardNames(content: string): string[] {
     const cardNames: string[] = [];
     // Look for lines that start with "- " followed by card name
-    const lines = content.split('\n');
+    const lines = content.split("\n");
     for (const line of lines) {
       const trimmed = line.trim();
-      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+      if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
         const cardName = trimmed.substring(2).trim();
-        if (cardName && cardName.length > 5) { // Filter out very short names
+        if (cardName && cardName.length > 5) {
+          // Filter out very short names
           cardNames.push(cardName);
         }
       }
@@ -301,8 +302,8 @@ User query: "${query}"`;
     embedding: number[],
   ): Promise<Map<string, string>> {
     const cardUrlMap = new Map<string, string>();
-    
-    globalLogger.info("Fetching URLs for card names", { 
+
+    globalLogger.info("Fetching URLs for card names", {
       count: cardNames.length,
       cardNames: cardNames.slice(0, 5), // Log first 5 to avoid clutter
     });
@@ -312,8 +313,8 @@ User query: "${query}"`;
         // Generate card slug from name
         const cardSlug = cardName
           .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '');
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "");
 
         // Query for card_info with this slug to get URL
         const filter = {
@@ -485,6 +486,21 @@ User query: "${query}"`;
       // Sort by score descending
       uniqueMatches.sort((a, b) => b.score - a.score);
 
+      // Check if we have a card_list chunk and need to fetch URLs
+      const cardListMatch = uniqueMatches.find(
+        (m) => m.metadata?.chunk_type === "card_list",
+      );
+      let cardUrlMap: Map<string, string> = new Map();
+
+      if (cardListMatch && cardListMatch.metadata?.content) {
+        const cardNames = this.extractCardNames(
+          cardListMatch.metadata.content as string,
+        );
+        if (cardNames.length > 0) {
+          cardUrlMap = await this.fetchCardUrls(cardNames, embedding);
+        }
+      }
+
       // Build context string
       const contextChunks: string[] = [];
 
@@ -542,6 +558,14 @@ Content: ${metadata.content || "N/A"}
         );
       }
 
+      // Add fetched card URLs if we have them
+      if (cardUrlMap.size > 0) {
+        const cardUrlsText = Array.from(cardUrlMap.entries())
+          .map(([name, url]) => `${name}: ${url}`)
+          .join("\n");
+        contextChunks.push(`\nCard URLs:\n${cardUrlsText}\n---\n`);
+      }
+
       const finalContext = contextChunks.join("\n");
       const matchCount = uniqueMatches.length;
 
@@ -549,6 +573,7 @@ Content: ${metadata.content || "N/A"}
         contextLength: finalContext.length,
         numberOfChunks: uniqueMatches.length,
         matchCount,
+        cardUrlsAdded: cardUrlMap.size,
       });
 
       return {
@@ -614,6 +639,23 @@ Content: ${metadata.content || "N/A"}
         });
       }
 
+      // Check if we have a card_list chunk and need to fetch URLs
+      const cardListMatch =
+        queryResponse.matches &&
+        queryResponse.matches.find(
+          (m: any) => m.metadata?.chunk_type === "card_list",
+        );
+      let cardUrlMap: Map<string, string> = new Map();
+
+      if (cardListMatch && cardListMatch.metadata?.content) {
+        const cardNames = this.extractCardNames(
+          cardListMatch.metadata.content as string,
+        );
+        if (cardNames.length > 0) {
+          cardUrlMap = await this.fetchCardUrls(cardNames, embedding);
+        }
+      }
+
       // Format the context chunks
       const contextChunks: string[] = [];
 
@@ -633,6 +675,14 @@ Content: ${metadata.content || "N/A"}
         contextChunks.push(chunkText);
       }
 
+      // Add fetched card URLs if we have them
+      if (cardUrlMap.size > 0) {
+        const cardUrlsText = Array.from(cardUrlMap.entries())
+          .map(([name, url]) => `${name}: ${url}`)
+          .join("\n");
+        contextChunks.push(`\nCard URLs:\n${cardUrlsText}\n---\n`);
+      }
+
       const finalContext = contextChunks.join("\n");
       const matchCount = queryResponse.matches?.length || 0;
 
@@ -640,6 +690,7 @@ Content: ${metadata.content || "N/A"}
         contextLength: finalContext.length,
         numberOfChunks: contextChunks.length,
         matchCount,
+        cardUrlsAdded: cardUrlMap.size,
       });
 
       return { context: finalContext, matchCount };
