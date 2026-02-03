@@ -275,6 +275,77 @@ User query: "${query}"`;
   }
 
   /**
+   * Extract card names from content (used for card_list chunks)
+   */
+  private extractCardNames(content: string): string[] {
+    const cardNames: string[] = [];
+    // Look for lines that start with "- " followed by card name
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+        const cardName = trimmed.substring(2).trim();
+        if (cardName && cardName.length > 5) { // Filter out very short names
+          cardNames.push(cardName);
+        }
+      }
+    }
+    return cardNames;
+  }
+
+  /**
+   * Fetch URLs for specific card names
+   */
+  private async fetchCardUrls(
+    cardNames: string[],
+    embedding: number[],
+  ): Promise<Map<string, string>> {
+    const cardUrlMap = new Map<string, string>();
+    
+    globalLogger.info("Fetching URLs for card names", { 
+      count: cardNames.length,
+      cardNames: cardNames.slice(0, 5), // Log first 5 to avoid clutter
+    });
+
+    for (const cardName of cardNames) {
+      try {
+        // Generate card slug from name
+        const cardSlug = cardName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+
+        // Query for card_info with this slug to get URL
+        const filter = {
+          $and: [{ card_slug: cardSlug }, { chunk_type: "card_info" }],
+        };
+
+        const queryResponse = await this.pineconeIndex.query({
+          vector: embedding,
+          topK: 1,
+          includeMetadata: true,
+          filter,
+        });
+
+        if (queryResponse.matches && queryResponse.matches.length > 0) {
+          const match = queryResponse.matches[0];
+          const url = match.metadata?.url;
+          if (url) {
+            cardUrlMap.set(cardName, url as string);
+            globalLogger.info(`Found URL for card: ${cardName}`, { url });
+          }
+        }
+      } catch (error) {
+        globalLogger.warn(`Failed to fetch URL for card: ${cardName}`, {
+          error: (error as Error).message,
+        });
+      }
+    }
+
+    return cardUrlMap;
+  }
+
+  /**
    * Check if query needs important_links (KFS, PDFs, terms, etc.)
    */
   private needsImportantLinks(query: string): boolean {
