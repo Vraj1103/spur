@@ -35,11 +35,15 @@ You will receive one or more "context chunks" with metadata for each user query.
 
 General rules for grounding
 1. Only use facts that appear in the context. Do not guess or invent numbers, limits, or conditions.
-2. If two chunks conflict, prefer:
+2. **CRITICAL - Numbers and Figures:** When quoting specific numbers (fees, earning rates, minimum salary, limits, percentages, etc.), you MUST only use figures that are explicitly stated in the retrieved chunks. Do NOT estimate, round, or approximate. If the exact figure is not in the context, say "I don't have that specific information" rather than guessing.
+   - Example: If context says "1.5 Skywards Miles per USD", quote exactly "1.5 Skywards Miles per USD"
+   - Do NOT say "around 1.5" or "approximately 1-2 miles" or invent figures
+   - Annual fees, joining fees, minimum salary - must be exact from context or not stated at all
+3. If two chunks conflict, prefer:
    - Newer / more specific card‑level chunks over generic ones.
    - \`requirements\` or \`card_info\` chunks for documents/eligibility.
    - \`card_benefits_detail\` or \`benefits_list\` for benefits/rewards.
-3. Always keep the answer consistent with the metadata:
+4. Always keep the answer consistent with the metadata:
    - If you mention a card, use its \`card_name\` from metadata.
    - If you summarize a benefit or document, ensure it exists in the text you see.
 
@@ -406,6 +410,15 @@ User query: "${query}"`;
 
           if (matches.length > 0) {
             allMatches.push(...matches);
+
+            // Special logging for landing_page_detail to see full content
+            const contentPreview = matches[0].metadata?.content
+              ? String(matches[0].metadata.content).substring(
+                  0,
+                  chunkType === "landing_page_detail" ? 500 : 100,
+                )
+              : "N/A";
+
             globalLogger.info(
               `Query for ${chunkType} returned ${matches.length} match(es)`,
               {
@@ -415,9 +428,10 @@ User query: "${query}"`;
                   ? {
                       id: matches[0].id,
                       score: matches[0].score,
-                      contentPreview: matches[0].metadata?.content
-                        ? String(matches[0].metadata.content).substring(0, 100)
-                        : "N/A",
+                      contentPreview,
+                      fullContentLength: matches[0].metadata?.content
+                        ? String(matches[0].metadata.content).length
+                        : 0,
                     }
                   : null,
               },
@@ -515,16 +529,39 @@ User query: "${query}"`;
 
         const metadata = match.metadata as any;
 
-        // Log what we're including
+        // Log what we're including (with more detail for landing_page_detail)
+        const logPreviewLength =
+          chunkType === "landing_page_detail" ? 300 : 100;
+        const fullContentLength = metadata.content
+          ? String(metadata.content).length
+          : 0;
+
         globalLogger.info("Including chunk in context", {
           id: match.id,
           score: match.score,
           card_slug: metadata.card_slug,
           chunk_type: chunkType,
           contentPreview: metadata.content
-            ? String(metadata.content).substring(0, 100) + "..."
+            ? String(metadata.content).substring(0, logPreviewLength) + "..."
             : "N/A",
+          fullContentLength,
         });
+
+        // Log full content for key chunk types for debugging
+        if (
+          [
+            "landing_page_detail",
+            "card_benefits_detail",
+            "benefits_list",
+            "card_info",
+          ].includes(chunkType) &&
+          metadata.content
+        ) {
+          globalLogger.info(`FULL ${chunkType} content:`, {
+            chunkType,
+            content: String(metadata.content),
+          });
+        }
 
         // Build chunk text with section header
         const header =
