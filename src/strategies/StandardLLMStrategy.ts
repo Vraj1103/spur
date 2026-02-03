@@ -347,39 +347,18 @@ User query: "${query}"`;
   }
 
   /**
-   * Check if query needs important_links (KFS, PDFs, terms, etc.)
-   */
-  private needsImportantLinks(query: string): boolean {
-    const linksKeywords = [
-      "kfs",
-      "key facts statement",
-      "fees",
-      "charges",
-      "terms",
-      "conditions",
-      "pdf",
-      "document",
-      "full details",
-      "link",
-      "where can i find",
-      "download",
-      "statement",
-      "agreement",
-    ];
-
-    const lowerQuery = query.toLowerCase();
-    return linksKeywords.some((keyword) => lowerQuery.includes(keyword));
-  }
-
-  /**
    * Per-type top-K retrieval: Query Pinecone separately for each chunk type
+   * ALWAYS queries all 5 chunk types for comprehensive context
    */
   private async fetchContextPerType(
     query: string,
     cardSlug: string,
   ): Promise<{ context: string; matchCount: number; links: string[] }> {
     try {
-      globalLogger.info("Starting per-type retrieval", { query, cardSlug });
+      globalLogger.info("Starting per-type retrieval (5 chunk types)", {
+        query,
+        cardSlug,
+      });
 
       // Generate embedding once for all queries
       const embeddingResponse = await this.openai.embeddings.create({
@@ -393,19 +372,16 @@ User query: "${query}"`;
         embeddingLength: embedding.length,
       });
 
-      // Define the base chunk types we always want to query
-      const chunkTypes = ["card_info", "benefits_list", "card_benefits_detail"];
+      // ALL 5 chunk types are mandatory
+      const chunkTypes = [
+        "card_info",
+        "benefits_list",
+        "card_benefits_detail",
+        "important_links",
+        "landing_page_detail",
+      ];
 
-      // Check if we should also query for important_links
-      const shouldFetchLinks = this.needsImportantLinks(query);
-      if (shouldFetchLinks) {
-        chunkTypes.push("important_links");
-        globalLogger.info(
-          "Query contains link-related keywords, will fetch important_links",
-        );
-      } else {
-        globalLogger.info("Query does not need important_links, skipping");
-      }
+      globalLogger.info("Will query all 5 chunk types", { chunkTypes });
 
       const allMatches: any[] = [];
       const matchesByType: Record<string, number> = {};
@@ -470,7 +446,6 @@ User query: "${query}"`;
         totalMatches: allMatches.length,
         matchesByType,
         uniqueLinks: allLinks.size,
-        queriedImportantLinks: shouldFetchLinks,
       });
 
       // Deduplicate by id
@@ -501,10 +476,43 @@ User query: "${query}"`;
         }
       }
 
-      // Build context string
+      // Build context string with section headers in strict order
+      // Order: card_info, benefits_list, card_benefits_detail, important_links, landing_page_detail
       const contextChunks: string[] = [];
 
+      // Organize matches by chunk_type for ordered output
+      const matchesMap = new Map<string, any>();
       for (const match of uniqueMatches) {
+        const chunkType = match.metadata?.chunk_type;
+        if (chunkType) {
+          matchesMap.set(chunkType, match);
+        }
+      }
+
+      // Process in strict order
+      const orderedTypes = [
+        "card_info",
+        "benefits_list",
+        "card_benefits_detail",
+        "important_links",
+        "landing_page_detail",
+      ];
+
+      const sectionHeaders: Record<string, string> = {
+        card_info: "===== CARD INFO =====",
+        benefits_list: "===== BENEFITS LIST =====",
+        card_benefits_detail: "===== BENEFITS DETAIL =====",
+        important_links: "===== IMPORTANT LINKS =====",
+        landing_page_detail: "===== LANDING PAGE =====",
+      };
+
+      for (const chunkType of orderedTypes) {
+        const match = matchesMap.get(chunkType);
+        if (!match) {
+          globalLogger.info(`No match found for chunk_type: ${chunkType}`);
+          continue; // Skip if this type wasn't found
+        }
+
         const metadata = match.metadata as any;
 
         // Log what we're including
@@ -512,43 +520,30 @@ User query: "${query}"`;
           id: match.id,
           score: match.score,
           card_slug: metadata.card_slug,
-          chunk_type: metadata.chunk_type,
+          chunk_type: chunkType,
           contentPreview: metadata.content
             ? String(metadata.content).substring(0, 100) + "..."
             : "N/A",
         });
 
-        // Special formatting for important_links
-        if (metadata.chunk_type === "important_links") {
-          const linksContent = metadata.content || "";
-          const chunkText = `
+        // Build chunk text with section header
+        const header =
+          sectionHeaders[chunkType] || `===== ${chunkType.toUpperCase()} =====`;
+        const chunkText = `
+${header}
 Chunk ID: ${match.id}
 Score: ${match.score}
 Card Name: ${metadata.card_name || "N/A"}
 Card Slug: ${metadata.card_slug || "N/A"}
-Chunk Type: important_links
-Source Type: ${metadata.source_type || "N/A"}
-
-Important Links and Documents:
-${linksContent}
----
-`;
-          contextChunks.push(chunkText);
-        } else {
-          // Standard formatting for other chunk types
-          const chunkText = `
-Chunk ID: ${match.id}
-Score: ${match.score}
-Card Name: ${metadata.card_name || "N/A"}
-Card Slug: ${metadata.card_slug || "N/A"}
-Chunk Type: ${metadata.chunk_type || "N/A"}
+Chunk Type: ${chunkType}
 Source Type: ${metadata.source_type || "N/A"}
 URL: ${metadata.url || "N/A"}
-Content: ${metadata.content || "N/A"}
+
+Content:
+${metadata.content || "N/A"}
 ---
 `;
-          contextChunks.push(chunkText);
-        }
+        contextChunks.push(chunkText);
       }
 
       // Add all collected links summary at the end (for additional reference)
@@ -569,11 +564,18 @@ Content: ${metadata.content || "N/A"}
       const finalContext = contextChunks.join("\n");
       const matchCount = uniqueMatches.length;
 
+      // Log which chunk types were found vs missing
+      const foundTypes = Array.from(matchesMap.keys());
+      const missingTypes = orderedTypes.filter((t) => !matchesMap.has(t));
+
       globalLogger.info("Per-type context build completed", {
         contextLength: finalContext.length,
         numberOfChunks: uniqueMatches.length,
         matchCount,
         cardUrlsAdded: cardUrlMap.size,
+        foundChunkTypes: foundTypes,
+        missingChunkTypes: missingTypes,
+        allFiveFound: missingTypes.length === 0,
       });
 
       return {
